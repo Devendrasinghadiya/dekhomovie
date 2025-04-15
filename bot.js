@@ -9,7 +9,6 @@ const PORT = process.env.PORT || 3000;
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 const groupId = process.env.GROUP_ID;
 
-// Express server
 app.get('/', (req, res) => {
   res.send('Cineflow Bot is running!');
 });
@@ -22,7 +21,6 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-// Bot commands
 bot.setMyCommands([
   { command: 'start', description: 'Start the bot' },
   { command: 'movie', description: 'Search a movie (e.g., /movie RRR)' },
@@ -64,9 +62,6 @@ bot.onText(/\/(movie|tv) (.+)/, async (msg, match) => {
   }
 
   const isAllowed = await isMember(userId);
-  if (!isAllowed) {
-    return bot.sendMessage(chatId, `🚫 To use this bot, please join our group first:\n👉 https://t.me/cineflow_chat`);
-  }
 
   try {
     const encodedUrl = encodeURIComponent(
