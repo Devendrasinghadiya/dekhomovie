@@ -10,7 +10,7 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 const groupId = process.env.GROUP_ID;
 
 app.get('/', (req, res) => {
-  res.send('Cineflow Bot is running!');
+  res.send('dekhoMovies Bot is running!');
 });
 
 app.get('/health', (req, res) => {
@@ -42,10 +42,10 @@ bot.onText(/\/start/, async (msg) => {
 
   const allowed = await isMember(userId);
   if (allowed) {
-    return bot.sendMessage(chatId, `👋 Welcome to Cineflow Bot!\n\n🎥 Search movies & TV shows and watch them directly on Cineflow.\n\nThen use:\n/movie <movie name>\n/tv <tv show name>`);
+    return bot.sendMessage(chatId, `👋 Welcome to DekhoMovies Bot!\n\n🎥 Search movies & TV shows and watch them directly on DekhoMovies.\n\nThen use:\n/movie <movie name>\n/tv <tv show name>`);
   }
 
-  return bot.sendMessage(chatId, `👋 Welcome to Cineflow Bot!\n\n🎥 Search movies & TV shows and watch them directly on Cineflow.\n\n🔗 First, join our group to use the bot:\n👉 [Join Cineflow Chat](https://t.me/cineflow_chat)\n\nThen use:\n/movie <movie name>\n/tv <tv show name>`, {
+  return bot.sendMessage(chatId, `👋 Welcome to DekhoMovies Bot!\n\n🎥 Search movies & TV shows and watch them directly on DekhoMovies.\n\n🔗 First, join our group to use the bot:\n👉 [Join DekhoMovies Chat](https://t.me/+8OKLbDERtu80MjA1)\n\nThen use:\n/movie <movie name>\n/tv <tv show name>`, {
     parse_mode: 'Markdown',
     disable_web_page_preview: true
   });
