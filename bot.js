@@ -7,7 +7,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
-const groupId = process.env.GROUP_ID;
 
 // Express server
 app.get('/', (req, res) => {
@@ -30,28 +29,9 @@ bot.setMyCommands([
   { command: 'id', description: 'Search by TMDB ID (e.g., /id movie 12345)' },
 ]);
 
-async function isMember(userId) {
-  try {
-    const res = await bot.getChatMember(groupId, userId);
-    return ['creator', 'administrator', 'member'].includes(res.status);
-  } catch (err) {
-    return false;
-  }
-}
-
-bot.onText(/\/start/, async (msg) => {
+bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  const userId = msg.from.id;
-
-  const allowed = await isMember(userId);
-  if (allowed) {
-    return bot.sendMessage(chatId, `👋 Welcome to Cineflow Bot!\n\n🎥 Search movies & TV shows and watch them directly on Cineflow.\n\nAvailable commands:\n/movie <movie name>\n/tv <tv show name>\n/id <movie/tv> <tmdb_id>`);
-  }
-
-  return bot.sendMessage(chatId, `👋 Welcome to Cineflow Bot!\n\n🎥 Search movies & TV shows and watch them directly on Cineflow.\n\n🔗 First, join our group to use the bot:\n👉 [Join Cineflow Chat](https://t.me/cineflow_chat)\n\nAvailable commands:\n/movie <movie name>\n/tv <tv show name>\n/id <movie/tv> <tmdb_id>`, {
-    parse_mode: 'Markdown',
-    disable_web_page_preview: true
-  });
+  bot.sendMessage(chatId, `👋 Welcome to Cineflow Bot!\n\n🎥 Search movies & TV shows and watch them directly on Cineflow.\n\nAvailable commands:\n/movie <movie name>\n/tv <tv show name>\n/id <movie/tv> <tmdb_id>`);
 });
 
 // Helper function to send media result
@@ -84,17 +64,11 @@ async function sendMediaResult(chatId, type, result) {
 
 bot.onText(/\/(movie|tv) (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
-  const userId = msg.from.id;
   const type = match[1];
   const query = match[2].trim();
 
   if (!query) {
     return bot.sendMessage(chatId, `❌ Please enter a ${type} name. Example:\n/${type} RRR`);
-  }
-
-  const isAllowed = await isMember(userId);
-  if (!isAllowed) {
-    return bot.sendMessage(chatId, `🚫 To use this bot, please join our group first:\n👉 https://t.me/cineflow_chat`);
   }
 
   try {
@@ -121,18 +95,11 @@ bot.onText(/\/(movie|tv) (.+)/, async (msg, match) => {
   }
 });
 
-// Add TMDB ID search command
-// Updated TMDB ID search command
+// TMDB ID search command
 bot.onText(/\/id (movie|tv) (\d+)/, async (msg, match) => {
   const chatId = msg.chat.id;
-  const userId = msg.from.id;
   const type = match[1];
   const tmdbId = match[2];
-
-  const isAllowed = await isMember(userId);
-  if (!isAllowed) {
-    return bot.sendMessage(chatId, `🚫 To use this bot, please join our group first:\n👉 https://t.me/cineflow_chat`);
-  }
 
   try {
     const encodedUrl = encodeURIComponent(
@@ -141,7 +108,7 @@ bot.onText(/\/id (movie|tv) (\d+)/, async (msg, match) => {
     const finalUrl = `${process.env.PROXY_API_URL}${encodedUrl}`;
     const res = await axios.get(finalUrl);
 
-    // Check if response contains valid data (not checking for success flag)
+    // Check if response contains valid data
     if (res.data && (res.data.title || res.data.name)) {
       await sendMediaResult(chatId, type, res.data);
     } else {
