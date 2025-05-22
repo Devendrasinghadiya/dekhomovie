@@ -31,38 +31,38 @@ bot.setMyCommands([
   { command: 'id', description: 'Search by TMDB ID (e.g., /id movie 12345)' },
 ]);
 
-async function isMember(userId) {
-  if ([2019316303, 8056565859].includes(userId)) {
-    console.log(`Bypassing check for user ${userId}`);
-    return true;
-  }
+// async function isMember(userId) {
+//   if ([2019316303, 8056565859].includes(userId)) {
+//     console.log(`Bypassing check for user ${userId}`);
+//     return true;
+//   }
 
-  try {
-    try {
-      const groupRes = await bot.getChatMember(groupId, userId);
-      if (['creator', 'administrator', 'member'].includes(groupRes.status)) {
-        console.log(`User ${userId} found in group`);
-        return true;
-      }
-    } catch (groupErr) {
-      console.log(`Group check error for ${userId}:`, groupErr.message);
-    }
-    try {
-      const channelRes = await bot.getChatMember(channelId, userId);
-      if (['creator', 'administrator', 'member'].includes(channelRes.status)) {
-        console.log(`User ${userId} found in channel`);
-        return true;
-      }
-    } catch (channelErr) {
-      console.log(`Channel check error for ${userId}:`, channelErr.message);
-    }
+//   try {
+//     try {
+//       const groupRes = await bot.getChatMember(groupId, userId);
+//       if (['creator', 'administrator', 'member'].includes(groupRes.status)) {
+//         console.log(`User ${userId} found in group`);
+//         return true;
+//       }
+//     } catch (groupErr) {
+//       console.log(`Group check error for ${userId}:`, groupErr.message);
+//     }
+//     try {
+//       const channelRes = await bot.getChatMember(channelId, userId);
+//       if (['creator', 'administrator', 'member'].includes(channelRes.status)) {
+//         console.log(`User ${userId} found in channel`);
+//         return true;
+//       }
+//     } catch (channelErr) {
+//       console.log(`Channel check error for ${userId}:`, channelErr.message);
+//     }
 
-    return false;
-  } catch (err) {
-    console.error('Global membership check error:', err);
-    return false;
-  }
-}
+//     return false;
+//   } catch (err) {
+//     console.error('Global membership check error:', err);
+//     return false;
+//   }
+// }
 
 // Verify bot is in required chats
 async function verifyBotMembership() {
@@ -86,14 +86,8 @@ verifyBotMembership();
 
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
-  const userId = msg.from.id;
-
-  const allowed = await isMember(userId);
-  if (allowed) {
-    return bot.sendMessage(chatId, `👋 Welcome to Cineflow Bot!\n\n🎥 Search movies & TV shows and watch them directly on Cineflow.\n\nAvailable commands:\n/movie <movie name>\n/tv <tv show name>\n/id <movie/tv> <tmdb_id>`);
-  }
-
-  return bot.sendMessage(chatId, `👋 Welcome to Cineflow Bot!\n\n🎥 Search movies & TV shows and watch them directly on Cineflow.\n\n🔗 First, join our group or channel to use the bot (join any one):\n👉 [Join Cineflow Chat](https://t.me/cineflow_chat)\n👉 [Join Cineflow Movies](https://t.me/cineflow_movies_official)\n\nAfter joining, send /start again.\n\nAvailable commands:\n/movie <movie name>\n/tv <tv show name>\n/id <movie/tv> <tmdb_id>`, {
+  
+  return bot.sendMessage(chatId, `👋 Welcome to Cineflow Bot!\n\n🎥 Search movies & TV shows and watch them directly on Cineflow.\n\n🔗 Join our community for updates:\n👉 [Cineflow Chat Group](${groupLink})\n👉 [Cineflow Movies Channel](${channelLink})\n\nAvailable commands:\n/movie <movie name>\n/tv <tv show name>\n/id <movie/tv> <tmdb_id>`, {
     parse_mode: 'Markdown',
     disable_web_page_preview: true
   });
@@ -221,13 +215,13 @@ bot.on('callback_query', async (callbackQuery) => {
   const data = callbackQuery.data;
   const messageId = callbackQuery.message.message_id;
 
-  const isAllowed = await isMember(userId);
-  if (isAllowed) {
-    return bot.answerCallbackQuery(callbackQuery.id, { 
-      text: '🚫 Please join our group or channel first to use this bot.', 
-      show_alert: true 
-    });
-  }
+  // const isAllowed = await isMember(userId);
+  // if (isAllowed) {
+  //   return bot.answerCallbackQuery(callbackQuery.id, { 
+  //     text: '🚫 Please join our group or channel first to use this bot.', 
+  //     show_alert: true 
+  //   });
+  // }
 
   try {
     if (data.startsWith('search_prev_') || data.startsWith('search_next_')) {
@@ -289,10 +283,10 @@ bot.on('message', async (msg) => {
   // Ignore if it's a command or empty
   if (!text || text.startsWith('/')) return;
 
-  const isAllowed = await isMember(userId);
-  if (isAllowed) {
-    return bot.sendMessage(chatId, `🚫 To use this bot, please join our group or channel first:\n👉 https://t.me/cineflow_chat\nor\n👉 https://t.me/cineflow_movies_official\n\n(You only need to join one)`);
-  }
+  // const isAllowed = await isMember(userId);
+  // if (isAllowed) {
+  //   return bot.sendMessage(chatId, `🚫 To use this bot, please join our group or channel first:\n👉 https://t.me/cineflow_chat\nor\n👉 https://t.me/cineflow_movies_official\n\n(You only need to join one)`);
+  // }
 
   // Send search results for the query
   await sendSearchResults(chatId, userId, text);
@@ -308,10 +302,10 @@ bot.onText(/\/(movie|tv) (.+)/, async (msg, match) => {
     return bot.sendMessage(chatId, `❌ Please enter a ${type} name. Example:\n/${type} RRR`);
   }
 
-  const isAllowed = await isMember(userId);
-  if (isAllowed) {
-    return bot.sendMessage(chatId, `🚫 To use this bot, please join our group or channel first:\n👉 https://t.me/cineflow_chat\nor\n👉 https://t.me/cineflow_movies_official\n\n(You only need to join one)`);
-  }
+  // const isAllowed = await isMember(userId);
+  // if (isAllowed) {
+  //   return bot.sendMessage(chatId, `🚫 To use this bot, please join our group or channel first:\n👉 https://t.me/cineflow_chat\nor\n👉 https://t.me/cineflow_movies_official\n\n(You only need to join one)`);
+  // }
 
   try {
     const encodedUrl = encodeURIComponent(
@@ -343,10 +337,10 @@ bot.onText(/\/id (movie|tv) (\d+)/, async (msg, match) => {
   const type = match[1];
   const tmdbId = match[2];
 
-  const isAllowed = await isMember(userId);
-  if (isAllowed) {
-    return bot.sendMessage(chatId, `🚫 To use this bot, please join our group or channel first:\n👉 https://t.me/cineflow_chat\nor\n👉 https://t.me/cineflow_movies_official\n\n(You only need to join one)`);
-  }
+  // const isAllowed = await isMember(userId);
+  // if (isAllowed) {
+  //   return bot.sendMessage(chatId, `🚫 To use this bot, please join our group or channel first:\n👉 https://t.me/cineflow_chat\nor\n👉 https://t.me/cineflow_movies_official\n\n(You only need to join one)`);
+  // }
 
   try {
     const encodedUrl = encodeURIComponent(
