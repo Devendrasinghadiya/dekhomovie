@@ -10,7 +10,6 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 const groupId = process.env.GROUP_ID;
 const channelId = process.env.CHANNEL_ID;
 
-// Store search results and timers for deletion
 const userSearchState = {};
 
 app.get('/', (req, res) => {
@@ -33,14 +32,12 @@ bot.setMyCommands([
 ]);
 
 async function isMember(userId) {
-  // Temporary manual override for testing
   if ([2019316303, 8056565859].includes(userId)) {
     console.log(`Bypassing check for user ${userId}`);
     return true;
   }
 
   try {
-    // Check group membership
     try {
       const groupRes = await bot.getChatMember(groupId, userId);
       if (['creator', 'administrator', 'member'].includes(groupRes.status)) {
@@ -50,8 +47,6 @@ async function isMember(userId) {
     } catch (groupErr) {
       console.log(`Group check error for ${userId}:`, groupErr.message);
     }
-
-    // Check channel membership
     try {
       const channelRes = await bot.getChatMember(channelId, userId);
       if (['creator', 'administrator', 'member'].includes(channelRes.status)) {
@@ -227,7 +222,7 @@ bot.on('callback_query', async (callbackQuery) => {
   const messageId = callbackQuery.message.message_id;
 
   const isAllowed = await isMember(userId);
-  if (!isAllowed) {
+  if (isAllowed) {
     return bot.answerCallbackQuery(callbackQuery.id, { 
       text: '🚫 Please join our group or channel first to use this bot.', 
       show_alert: true 
@@ -295,7 +290,7 @@ bot.on('message', async (msg) => {
   if (!text || text.startsWith('/')) return;
 
   const isAllowed = await isMember(userId);
-  if (!isAllowed) {
+  if (isAllowed) {
     return bot.sendMessage(chatId, `🚫 To use this bot, please join our group or channel first:\n👉 https://t.me/cineflow_chat\nor\n👉 https://t.me/cineflow_movies_official\n\n(You only need to join one)`);
   }
 
@@ -314,7 +309,7 @@ bot.onText(/\/(movie|tv) (.+)/, async (msg, match) => {
   }
 
   const isAllowed = await isMember(userId);
-  if (!isAllowed) {
+  if (isAllowed) {
     return bot.sendMessage(chatId, `🚫 To use this bot, please join our group or channel first:\n👉 https://t.me/cineflow_chat\nor\n👉 https://t.me/cineflow_movies_official\n\n(You only need to join one)`);
   }
 
@@ -349,7 +344,7 @@ bot.onText(/\/id (movie|tv) (\d+)/, async (msg, match) => {
   const tmdbId = match[2];
 
   const isAllowed = await isMember(userId);
-  if (!isAllowed) {
+  if (isAllowed) {
     return bot.sendMessage(chatId, `🚫 To use this bot, please join our group or channel first:\n👉 https://t.me/cineflow_chat\nor\n👉 https://t.me/cineflow_movies_official\n\n(You only need to join one)`);
   }
 
