@@ -8,11 +8,11 @@ const PORT = process.env.PORT || 3000;
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 const groupId = process.env.GROUP_ID;
+const channelId = process.env.CHANNEL_ID;
 
-// Store search results and pagination state
+// Store search results and timers for deletion
 const userSearchState = {};
 
-// Express server
 app.get('/', (req, res) => {
   res.send('Cineflow Bot is running!');
 });
@@ -25,7 +25,6 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-// Bot commands
 bot.setMyCommands([
   { command: 'start', description: 'Start the bot' },
   { command: 'movie', description: 'Search a movie (e.g., /movie RRR)' },
@@ -34,13 +33,61 @@ bot.setMyCommands([
 ]);
 
 async function isMember(userId) {
+  // Temporary manual override for testing
+  if ([2019316303, 8056565859].includes(userId)) {
+    console.log(`Bypassing check for user ${userId}`);
+    return true;
+  }
+
   try {
-    const res = await bot.getChatMember(groupId, userId);
-    return ['creator', 'administrator', 'member'].includes(res.status);
+    // Check group membership
+    try {
+      const groupRes = await bot.getChatMember(groupId, userId);
+      if (['creator', 'administrator', 'member'].includes(groupRes.status)) {
+        console.log(`User ${userId} found in group`);
+        return true;
+      }
+    } catch (groupErr) {
+      console.log(`Group check error for ${userId}:`, groupErr.message);
+    }
+
+    // Check channel membership
+    try {
+      const channelRes = await bot.getChatMember(channelId, userId);
+      if (['creator', 'administrator', 'member'].includes(channelRes.status)) {
+        console.log(`User ${userId} found in channel`);
+        return true;
+      }
+    } catch (channelErr) {
+      console.log(`Channel check error for ${userId}:`, channelErr.message);
+    }
+
+    return false;
   } catch (err) {
+    console.error('Global membership check error:', err);
     return false;
   }
 }
+
+// Verify bot is in required chats
+async function verifyBotMembership() {
+  try {
+    await bot.getChat(groupId);
+    console.log('✅ Bot is in group');
+  } catch (err) {
+    console.error('❌ Bot NOT in group - add it first!');
+  }
+
+  try {
+    await bot.getChat(channelId);
+    console.log('✅ Bot is in channel');
+  } catch (err) {
+    console.error('❌ Bot NOT in channel - add it first!');
+  }
+}
+
+// Run on startup
+verifyBotMembership();
 
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
@@ -51,13 +98,12 @@ bot.onText(/\/start/, async (msg) => {
     return bot.sendMessage(chatId, `👋 Welcome to Cineflow Bot!\n\n🎥 Search movies & TV shows and watch them directly on Cineflow.\n\nAvailable commands:\n/movie <movie name>\n/tv <tv show name>\n/id <movie/tv> <tmdb_id>`);
   }
 
-  return bot.sendMessage(chatId, `👋 Welcome to Cineflow Bot!\n\n🎥 Search movies & TV shows and watch them directly on Cineflow.\n\n🔗 First, join our group to use the bot:\n👉 [Join Cineflow Chat](https://t.me/cineflow_chat)\n\nAvailable commands:\n/movie <movie name>\n/tv <tv show name>\n/id <movie/tv> <tmdb_id>`, {
+  return bot.sendMessage(chatId, `👋 Welcome to Cineflow Bot!\n\n🎥 Search movies & TV shows and watch them directly on Cineflow.\n\n🔗 First, join our group or channel to use the bot (join any one):\n👉 [Join Cineflow Chat](https://t.me/cineflow_chat)\n👉 [Join Cineflow Movies](https://t.me/cineflow_movies_official)\n\nAfter joining, send /start again.\n\nAvailable commands:\n/movie <movie name>\n/tv <tv show name>\n/id <movie/tv> <tmdb_id>`, {
     parse_mode: 'Markdown',
     disable_web_page_preview: true
   });
 });
 
-// Helper function to send media result
 async function sendMediaResult(chatId, type, result) {
   const title = result.title || result.name;
   const id = result.id;
@@ -85,7 +131,6 @@ async function sendMediaResult(chatId, type, result) {
   });
 }
 
-// Function to send search results as button grid
 async function sendSearchResults(chatId, userId, query, page = 1) {
   try {
     const encodedUrl = encodeURIComponent(
@@ -100,23 +145,27 @@ async function sendSearchResults(chatId, userId, query, page = 1) {
     const totalPages = res?.data?.total_pages || 1;
     
     if (!results || results.length === 0) {
-      return bot.sendMessage(chatId, `❌ No results found. Please try again with a different query.`);
+      return bot.sendMessage(chatId, `❌ No results found for "${query}". Please try again with a different query.`);
     }
 
-    // Store search state for pagination
+    // Clear any existing timer for this user
+    if (userSearchState[userId]?.timeout) {
+      clearTimeout(userSearchState[userId].timeout);
+    }
+
     userSearchState[userId] = {
       query,
       page,
       totalPages,
       results,
-      messageId: null // Will be set after sending the message
+      messageId: null,
+      timeout: null // Will store the deletion timer
     };
 
-    // Create button grid (3 buttons per row)
     const buttons = [];
     const mediaButtons = [];
     
-    results.forEach((item, index) => {
+    results.forEach((item) => {
       const emoji = item.media_type === 'movie' ? '🎬' : '📺';
       const year = item.release_date ? item.release_date.split('-')[0] : (item.first_air_date ? item.first_air_date.split('-')[0] : '');
       const buttonText = `${emoji} ${item.title || item.name}${year ? ` (${year})` : ''}`;
@@ -153,13 +202,24 @@ async function sendSearchResults(chatId, userId, query, page = 1) {
     // Store the message ID for later deletion
     userSearchState[userId].messageId = message.message_id;
 
+    // Set a timer to delete the search results after 5 minutes (300000 ms)
+    userSearchState[userId].timeout = setTimeout(async () => {
+      try {
+        if (userSearchState[userId]?.messageId) {
+          await bot.deleteMessage(chatId, userSearchState[userId].messageId);
+          delete userSearchState[userId];
+        }
+      } catch (err) {
+        console.error('Error auto-deleting search results:', err.message);
+      }
+    }, 300000); // 5 minutes
+
   } catch (err) {
-    console.error(err.message);
+    console.error('Search error:', err.message);
     bot.sendMessage(chatId, '⚠️ Something went wrong. Try again later.');
   }
 }
 
-// Handle callback queries for pagination and selection
 bot.on('callback_query', async (callbackQuery) => {
   const chatId = callbackQuery.message.chat.id;
   const userId = callbackQuery.from.id;
@@ -168,7 +228,10 @@ bot.on('callback_query', async (callbackQuery) => {
 
   const isAllowed = await isMember(userId);
   if (!isAllowed) {
-    return bot.answerCallbackQuery(callbackQuery.id, { text: '🚫 Please join our group first to use this bot.', show_alert: true });
+    return bot.answerCallbackQuery(callbackQuery.id, { 
+      text: '🚫 Please join our group or channel first to use this bot.', 
+      show_alert: true 
+    });
   }
 
   try {
@@ -177,11 +240,7 @@ bot.on('callback_query', async (callbackQuery) => {
       const [_, action, pageStr] = data.split('_');
       let page = parseInt(pageStr);
       
-      if (action === 'prev') {
-        page--;
-      } else if (action === 'next') {
-        page++;
-      }
+      page = action === 'prev' ? page - 1 : page + 1;
 
       const searchState = userSearchState[userId];
       if (searchState) {
@@ -208,29 +267,25 @@ bot.on('callback_query', async (callbackQuery) => {
       const res = await axios.get(finalUrl);
 
       if (res.data) {
-        // Delete the search results message first
-        const searchState = userSearchState[userId];
-        if (searchState?.messageId) {
-          try {
-            await bot.deleteMessage(chatId, searchState.messageId);
-          } catch (err) {
-            console.error('Error deleting search message:', err.message);
-          }
-        }
-        
         // Send the media result
         await sendMediaResult(chatId, type, res.data);
+        
+        // Don't delete the search grid immediately - let the timer handle it
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: `✅ Showing ${type === 'movie' ? 'movie' : 'TV show'} details`,
+          show_alert: false
+        });
       }
-      
-      await bot.answerCallbackQuery(callbackQuery.id);
     }
   } catch (err) {
-    console.error(err.message);
-    await bot.answerCallbackQuery(callbackQuery.id, { text: '⚠️ Something went wrong. Try again.', show_alert: true });
+    console.error('Callback error:', err.message);
+    await bot.answerCallbackQuery(callbackQuery.id, { 
+      text: '⚠️ Something went wrong. Try again.', 
+      show_alert: true 
+    });
   }
 });
 
-// Handle direct movie/TV show name input (without commands)
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
@@ -241,14 +296,13 @@ bot.on('message', async (msg) => {
 
   const isAllowed = await isMember(userId);
   if (!isAllowed) {
-    return bot.sendMessage(chatId, `🚫 To use this bot, please join our group first:\n👉 https://t.me/cineflow_chat`);
+    return bot.sendMessage(chatId, `🚫 To use this bot, please join our group or channel first:\n👉 https://t.me/cineflow_chat\nor\n👉 https://t.me/cineflow_movies_official\n\n(You only need to join one)`);
   }
 
-  // Send search results for the query using multi-search
+  // Send search results for the query
   await sendSearchResults(chatId, userId, text);
 });
 
-// Existing command handlers (unchanged)
 bot.onText(/\/(movie|tv) (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
@@ -261,7 +315,7 @@ bot.onText(/\/(movie|tv) (.+)/, async (msg, match) => {
 
   const isAllowed = await isMember(userId);
   if (!isAllowed) {
-    return bot.sendMessage(chatId, `🚫 To use this bot, please join our group first:\n👉 https://t.me/cineflow_chat`);
+    return bot.sendMessage(chatId, `🚫 To use this bot, please join our group or channel first:\n👉 https://t.me/cineflow_chat\nor\n👉 https://t.me/cineflow_movies_official\n\n(You only need to join one)`);
   }
 
   try {
@@ -273,7 +327,7 @@ bot.onText(/\/(movie|tv) (.+)/, async (msg, match) => {
 
     const results = res?.data?.results;
     if (!results || results.length === 0) {
-      return bot.sendMessage(chatId, `❌ No results found. Please try again with a full name.`);
+      return bot.sendMessage(chatId, `❌ No ${type} found for "${query}". Please try again with a full name.`);
     }
 
     const result = results.find(r =>
@@ -283,12 +337,11 @@ bot.onText(/\/(movie|tv) (.+)/, async (msg, match) => {
     await sendMediaResult(chatId, type, result);
 
   } catch (err) {
-    console.error(err.message);
+    console.error('Command error:', err.message);
     bot.sendMessage(chatId, '⚠️ Something went wrong. Try again later.');
   }
 });
 
-// Updated TMDB ID search command
 bot.onText(/\/id (movie|tv) (\d+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
@@ -297,7 +350,7 @@ bot.onText(/\/id (movie|tv) (\d+)/, async (msg, match) => {
 
   const isAllowed = await isMember(userId);
   if (!isAllowed) {
-    return bot.sendMessage(chatId, `🚫 To use this bot, please join our group first:\n👉 https://t.me/cineflow_chat`);
+    return bot.sendMessage(chatId, `🚫 To use this bot, please join our group or channel first:\n👉 https://t.me/cineflow_chat\nor\n👉 https://t.me/cineflow_movies_official\n\n(You only need to join one)`);
   }
 
   try {
@@ -307,11 +360,9 @@ bot.onText(/\/id (movie|tv) (\d+)/, async (msg, match) => {
     const finalUrl = `${process.env.PROXY_API_URL}${encodedUrl}`;
     const res = await axios.get(finalUrl);
 
-    // Check if response contains valid data (not checking for success flag)
     if (res.data && (res.data.title || res.data.name)) {
       await sendMediaResult(chatId, type, res.data);
     } else {
-      // Try alternative approach if direct ID lookup fails
       try {
         const searchEncodedUrl = encodeURIComponent(
           `https://api.themoviedb.org/3/find/${tmdbId}?external_source=imdb_id&api_key=${process.env.TMDB_API_KEY}`
@@ -327,12 +378,12 @@ bot.onText(/\/id (movie|tv) (\d+)/, async (msg, match) => {
           bot.sendMessage(chatId, `❌ No ${type} found with ID ${tmdbId}. Please check the ID and try again.`);
         }
       } catch (fallbackErr) {
-        console.error(fallbackErr.message);
+        console.error('Fallback ID search error:', fallbackErr.message);
         bot.sendMessage(chatId, `❌ No ${type} found with ID ${tmdbId}. Please check the ID and try again.`);
       }
     }
   } catch (err) {
-    console.error(err.message);
+    console.error('ID search error:', err.message);
     if (err.response?.status === 404) {
       bot.sendMessage(chatId, `❌ No ${type} found with ID ${tmdbId}. Please check the ID and try again.`);
     } else {
