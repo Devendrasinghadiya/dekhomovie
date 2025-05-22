@@ -10,7 +10,7 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
 // Express server
 app.get('/', (req, res) => {
-  res.send('Cineflow Bot is running!');
+  res.send('Movie Bot is running!');
 });
 
 app.get('/health', (req, res) => {
@@ -31,7 +31,7 @@ bot.setMyCommands([
 
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  bot.sendMessage(chatId, `👋 Welcome to Cineflow Bot!\n\n🎥 Search movies & TV shows and watch them directly on Cineflow.\n\nAvailable commands:\n/movie <movie name>\n/tv <tv show name>\n/id <movie/tv> <tmdb_id>`);
+  bot.sendMessage(chatId, `👋 Welcome to DeekhoMovies Bot!\n\n🎥 Search movies & TV shows and watch them directly on DekhoMovies.\n\nYou can either:\n1. Type /movie <name>\n2. Type /tv <name>\n3. Or simply type the movie/show name directly`);
 });
 
 // Helper function to send media result
@@ -41,7 +41,7 @@ async function sendMediaResult(chatId, type, result) {
   const imageUrl = `https://image.tmdb.org/t/p/w500${result.poster_path}`;
   const cineflowLink = `${process.env.CINEFLOW_URL}/${type}/${id}`;
   const downloadLink = `${process.env.CINEFLOW_URL}/download/${type}/${id}`;
-  const buttonText = type === 'movie' ? '🎬 Watch Movie' : '📺 Watch Show';
+  const buttonText = type === 'movie' ? '🎬 Watch on DekhoMovies' : '📺 Watch on DekhoMovies';
 
   const shareText = `Check out ${title} on Cineflow:\n${cineflowLink}`;
   
@@ -62,33 +62,109 @@ async function sendMediaResult(chatId, type, result) {
   });
 }
 
-bot.onText(/\/(movie|tv) (.+)/, async (msg, match) => {
+// Handle direct movie/TV show name input
+bot.on('text', async (msg) => {
   const chatId = msg.chat.id;
-  const type = match[1];
-  const query = match[2].trim();
+  const text = msg.text.trim();
+
+  // Skip if it's a command
+  if (text.startsWith('/')) return;
+
+  try {
+    // First try movie search
+    const movieEncodedUrl = encodeURIComponent(
+      `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(text)}&page=1&api_key=${process.env.TMDB_API_KEY}`
+    );
+    const movieFinalUrl = `${process.env.PROXY_API_URL}${movieEncodedUrl}`;
+    const movieRes = await axios.get(movieFinalUrl);
+
+    if (movieRes.data?.results?.length > 0) {
+      const exactMatch = movieRes.data.results.find(r => 
+        (r.title || r.name)?.toLowerCase() === text.toLowerCase()
+      ) || movieRes.data.results[0];
+      await sendMediaResult(chatId, 'movie', exactMatch);
+      return;
+    }
+
+    // If no movie found, try TV show search
+    const tvEncodedUrl = encodeURIComponent(
+      `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(text)}&page=1&api_key=${process.env.TMDB_API_KEY}`
+    );
+    const tvFinalUrl = `${process.env.PROXY_API_URL}${tvEncodedUrl}`;
+    const tvRes = await axios.get(tvFinalUrl);
+
+    if (tvRes.data?.results?.length > 0) {
+      const exactMatch = tvRes.data.results.find(r => 
+        (r.title || r.name)?.toLowerCase() === text.toLowerCase()
+      ) || tvRes.data.results[0];
+      await sendMediaResult(chatId, 'tv', exactMatch);
+    } else {
+      bot.sendMessage(chatId, '❌ No results found. Please try with /movie or /tv command.');
+    }
+  } catch (err) {
+    console.error(err.message);
+    bot.sendMessage(chatId, '⚠️ Something went wrong. Try again later.');
+  }
+});
+
+// Movie command
+bot.onText(/\/movie (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const query = match[1].trim();
 
   if (!query) {
-    return bot.sendMessage(chatId, `❌ Please enter a ${type} name. Example:\n/${type} RRR`);
+    return bot.sendMessage(chatId, '❌ Please enter a movie name. Example:\n/movie RRR');
   }
 
   try {
     const encodedUrl = encodeURIComponent(
-      `https://api.themoviedb.org/3/search/${type}?query=${encodeURIComponent(query)}&page=1&api_key=${process.env.TMDB_API_KEY}`
+      `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(query)}&page=1&api_key=${process.env.TMDB_API_KEY}`
     );
     const finalUrl = `${process.env.PROXY_API_URL}${encodedUrl}`;
     const res = await axios.get(finalUrl);
 
     const results = res?.data?.results;
     if (!results || results.length === 0) {
-      return bot.sendMessage(chatId, `❌ No results found. Please try again with a full name.`);
+      return bot.sendMessage(chatId, '❌ No results found. Please try again with a full name.');
     }
 
     const result = results.find(r =>
       (r.title || r.name)?.toLowerCase() === query.toLowerCase()
     ) || results[0];
 
-    await sendMediaResult(chatId, type, result);
+    await sendMediaResult(chatId, 'movie', result);
+  } catch (err) {
+    console.error(err.message);
+    bot.sendMessage(chatId, '⚠️ Something went wrong. Try again later.');
+  }
+});
 
+// TV command
+bot.onText(/\/tv (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const query = match[1].trim();
+
+  if (!query) {
+    return bot.sendMessage(chatId, '❌ Please enter a TV show name. Example:\n/tv Friends');
+  }
+
+  try {
+    const encodedUrl = encodeURIComponent(
+      `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(query)}&page=1&api_key=${process.env.TMDB_API_KEY}`
+    );
+    const finalUrl = `${process.env.PROXY_API_URL}${encodedUrl}`;
+    const res = await axios.get(finalUrl);
+
+    const results = res?.data?.results;
+    if (!results || results.length === 0) {
+      return bot.sendMessage(chatId, '❌ No results found. Please try again with a full name.');
+    }
+
+    const result = results.find(r =>
+      (r.name)?.toLowerCase() === query.toLowerCase()
+    ) || results[0];
+
+    await sendMediaResult(chatId, 'tv', result);
   } catch (err) {
     console.error(err.message);
     bot.sendMessage(chatId, '⚠️ Something went wrong. Try again later.');
@@ -108,11 +184,9 @@ bot.onText(/\/id (movie|tv) (\d+)/, async (msg, match) => {
     const finalUrl = `${process.env.PROXY_API_URL}${encodedUrl}`;
     const res = await axios.get(finalUrl);
 
-    // Check if response contains valid data
     if (res.data && (res.data.title || res.data.name)) {
       await sendMediaResult(chatId, type, res.data);
     } else {
-      // Try alternative approach if direct ID lookup fails
       try {
         const searchEncodedUrl = encodeURIComponent(
           `https://api.themoviedb.org/3/find/${tmdbId}?external_source=imdb_id&api_key=${process.env.TMDB_API_KEY}`
