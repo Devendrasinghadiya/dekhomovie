@@ -13,11 +13,9 @@ const channelId = process.env.CHANNEL_ID;
 const groupLink = process.env.GROUP_LINK || 'https://t.me/cineflow_chat';
 const channelLink = process.env.CHANNEL_LINK || 'https://t.me/cineflow_movies_official';
 
-// Store search results and timers
 const userSearchState = {};
 const messageTimeouts = new Map();
 
-// Helper function to delete messages after delay
 function scheduleMessageDeletion(chatId, messageId, delay = 120000) {
   clearTimeout(messageTimeouts.get(messageId));
   const timeout = setTimeout(async () => {
@@ -31,12 +29,10 @@ function scheduleMessageDeletion(chatId, messageId, delay = 120000) {
   messageTimeouts.set(messageId, timeout);
 }
 
-// Initialize Express server
 app.get('/', (req, res) => res.send('Cineflow Bot is running!'));
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
-// Set bot commands
 bot.setMyCommands([
   { command: 'start', description: 'Start the bot' },
   { command: 'movie', description: 'Search a movie (e.g., /movie Inception)' },
@@ -44,38 +40,6 @@ bot.setMyCommands([
   { command: 'id', description: 'Search by TMDB ID (e.g., /id movie 123)' }
 ]);
 
-// Membership verification
-// async function isMember(userId) {
-//   // Test user IDs bypass
-//   if ([2019316303, 8056565859].includes(userId)) {
-//     console.log(`Bypassing check for user ${userId}`);
-//     return true;
-//   }
-
-//   try {
-//     // Check group membership
-//     const groupRes = await bot.getChatMember(groupId, userId);
-//     if (['creator', 'administrator', 'member'].includes(groupRes.status)) {
-//       return true;
-//     }
-//   } catch (groupErr) {
-//     console.log(`Group check error: ${groupErr.message}`);
-//   }
-
-//   // Check channel membership
-//   try {
-//     const channelRes = await bot.getChatMember(channelId, userId);
-//     if (['creator', 'administrator', 'member'].includes(channelRes.status)) {
-//       return true;
-//     }
-//   } catch (channelErr) {
-//     console.log(`Channel check error: ${channelErr.message}`);
-//   }
-
-//   return false;
-// }
-
-// Start command handler
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
@@ -88,16 +52,6 @@ bot.onText(/\/start/, async (msg) => {
     ]
   };
 
-  if (await isMember(userId)) {
-    return bot.sendMessage(chatId, 
-      `👋 Welcome to Cineflow Bot!\n\n` +
-      `🎥 Search movies & TV shows\n\n` +
-      `Available commands:\n` +
-      `/movie <name>\n/tv <name>\n/id <type> <tmdb_id>`,
-      { reply_markup: welcomeButtons }
-    );
-  }
-
   const welcomeMsg = await bot.sendMessage(chatId,
     `👋 Welcome to Cineflow Bot!\n\n` +
     `🔗 Please join our community to use the bot:\n`,
@@ -109,7 +63,6 @@ bot.onText(/\/start/, async (msg) => {
   scheduleMessageDeletion(chatId, welcomeMsg.message_id, 300000);
 });
 
-// Improved media result display with share button
 async function sendMediaResult(chatId, type, result) {
   const title = result.title || result.name;
   const year = result.release_date?.split('-')[0] || result.first_air_date?.split('-')[0] || '';
@@ -157,21 +110,17 @@ async function sendMediaResult(chatId, type, result) {
         reply_markup: buttons 
       }
     );
-    scheduleMessageDeletion(chatId, msg.message_id, 300000);
+    // scheduleMessageDeletion(chatId, msg.message_id, 300000);
   }
 }
 
-// Enhanced search results with smart grid layout
+// Improved sendSearchResults function
 async function sendSearchResults(chatId, userId, query, page = 1) {
   try {
     // Clear previous search state
-    if (userSearchState[userId]?.timeout) {
+if (userSearchState[userId]?.timeout) {
       clearTimeout(userSearchState[userId].timeout);
-      try {
-        await bot.deleteMessage(chatId, userSearchState[userId].messageId);
-      } catch (err) {
-        console.error('Error deleting previous search:', err.message);
-      }
+      delete userSearchState[userId];
     }
 
     // API request
@@ -191,7 +140,7 @@ async function sendSearchResults(chatId, userId, query, page = 1) {
         {
           reply_markup: {
             inline_keyboard: [
-              [{ text: 'Join Community', url: groupLink }]
+              [{ text: 'Join Community', url: channelLink }]
             ]
           }
         }
@@ -224,11 +173,17 @@ async function sendSearchResults(chatId, userId, query, page = 1) {
     if (currentRow.length > 0) buttons.push(currentRow);
 
     // Add pagination if needed
-    const totalPages = res.data.total_pages || 1;
+    const totalPages = Math.min(res.data.total_pages || 1, 5); // Limit to 5 pages max
     if (totalPages > 1) {
       const pagination = [];
-      if (page > 1) pagination.push({ text: '⬅️ Previous', callback_data: `search_prev_${page}` });
-      if (page < totalPages) pagination.push({ text: 'Next ➡️', callback_data: `search_next_${page}` });
+      if (page > 1) pagination.push({ 
+        text: '⬅️ Previous', 
+        callback_data: `search_${query}_${page-1}` 
+      });
+      if (page < totalPages) pagination.push({ 
+        text: 'Next ➡️', 
+        callback_data: `search_${query}_${page+1}` 
+      });
       if (pagination.length > 0) buttons.push(pagination);
     }
 
@@ -240,7 +195,7 @@ async function sendSearchResults(chatId, userId, query, page = 1) {
       },
       { 
         text: 'Join Community', 
-        url: groupLink 
+        url: channelLink 
       }
     ]);
 
@@ -255,17 +210,24 @@ async function sendSearchResults(chatId, userId, query, page = 1) {
 
     // Store for pagination and auto-delete
     userSearchState[userId] = {
-      query, page, totalPages, results,
+      query, 
+      page, 
+      totalPages, 
+      results,
       messageId: msg.message_id,
       timeout: setTimeout(async () => {
         try {
+          // Only try to delete if the message is still there
           await bot.deleteMessage(chatId, msg.message_id);
-          delete userSearchState[userId];
         } catch (err) {
-          console.error('Error auto-deleting search:', err);
+          console.log('Auto-delete failed (message may already be deleted):', err.message);
+        } finally {
+          delete userSearchState[userId];
         }
       }, 180000) // Delete after 3 minutes
     };
+
+console.log(`Sending search results for ${query} page ${page} as message ${msg.message_id}`);
 
   } catch (err) {
     console.error('Search error:', err);
@@ -275,7 +237,7 @@ async function sendSearchResults(chatId, userId, query, page = 1) {
       {
         reply_markup: {
           inline_keyboard: [
-            [{ text: 'Join Community', url: groupLink }]
+            [{ text: 'Join Community', url: channelLink }]
           ]
         }
       }
@@ -284,32 +246,23 @@ async function sendSearchResults(chatId, userId, query, page = 1) {
   }
 }
 
-// Callback query handler
+// Updated callback query handler
 bot.on('callback_query', async (callbackQuery) => {
   const { message, data, from: { id: userId }, id: callbackId } = callbackQuery;
   const chatId = message.chat.id;
 
-  // if (!await isMember(userId)) {
-  //   return bot.answerCallbackQuery(callbackId, {
-  //     text: 'Please join our community first!',
-  //     show_alert: true
-  //   });
-  // }
-
   try {
     if (data.startsWith('search_')) {
-      // Pagination handling
-      const [_, action, page] = data.split('_');
-      const newPage = parseInt(page) + (action === 'prev' ? -1 : 1);
-      const searchState = userSearchState[userId];
+      // Handle pagination - format is "search_query_pageNumber"
+      const parts = data.split('_');
+      const query = parts.slice(1, -1).join('_'); // Handle queries with underscores
+      const page = parseInt(parts[parts.length - 1]);
       
-      if (searchState) {
-        await sendSearchResults(chatId, userId, searchState.query, newPage);
-        await bot.deleteMessage(chatId, searchState.messageId);
-      }
+      await sendSearchResults(chatId, userId, query, page);
+      await bot.deleteMessage(chatId, message.message_id);
+      await bot.answerCallbackQuery(callbackId);
     } 
     else if (data.startsWith('select_')) {
-      // Media selection
       const [_, type, id] = data.split('_');
       const apiUrl = `https://api.themoviedb.org/3/${type}/${id}?api_key=${process.env.TMDB_API_KEY}`;
       const res = await axios.get(`${process.env.PROXY_API_URL}${encodeURIComponent(apiUrl)}`);
@@ -317,9 +270,14 @@ bot.on('callback_query', async (callbackQuery) => {
       if (res.data) {
         await sendMediaResult(chatId, type, res.data);
       }
+      await bot.answerCallbackQuery(callbackId);
     }
-    
-    await bot.answerCallbackQuery(callbackId);
+    else {
+      await bot.answerCallbackQuery(callbackId, {
+        text: 'Unknown action',
+        show_alert: false
+      });
+    }
   } catch (err) {
     console.error('Callback error:', err);
     await bot.answerCallbackQuery(callbackId, {
@@ -333,45 +291,12 @@ bot.on('callback_query', async (callbackQuery) => {
 bot.on('message', async (msg) => {
   const { text, chat: { id: chatId }, from: { id: userId } } = msg;
   if (!text || text.startsWith('/')) return;
-
-  // if (!await isMember(userId)) {
-  //   const msg = await bot.sendMessage(
-  //     chatId, 
-  //     `🚫 Please join our community first:`,
-  //     {
-  //       reply_markup: {
-  //         inline_keyboard: [
-  //           [{ text: 'Join Cineflow Chat', url: groupLink }],
-  //           [{ text: 'Join Cineflow Movies', url: channelLink }]
-  //         ]
-  //       }
-  //     }
-  //   );
-  //   return scheduleMessageDeletion(chatId, msg.message_id);
-  // }
-
   await sendSearchResults(chatId, userId, text.trim());
 });
 
-// Command handlers
 const handleMediaSearch = async (msg, match) => {
   const [_, type, query] = match;
   const { chat: { id: chatId }, from: { id: userId } } = msg;
-
-  // if (!await isMember(userId)) {
-  //   const msg = await bot.sendMessage(
-  //     chatId, 
-  //     `🚫 Please join our community first:`,
-  //     {
-  //       reply_markup: {
-  //         inline_keyboard: [
-  //           [{ text: 'Join Cineflow Chat', url: groupLink }]
-  //         ]
-  //       }
-  //     }
-  //   );
-  //   return scheduleMessageDeletion(chatId, msg.message_id);
-  // }
 
   try {
     const apiUrl = `https://api.themoviedb.org/3/search/${type}?query=${encodeURIComponent(query)}&page=1`;
@@ -387,7 +312,7 @@ const handleMediaSearch = async (msg, match) => {
           reply_markup: {
             inline_keyboard: [
               [{ text: 'Try Again', switch_inline_query_current_chat: `/${type} ` }],
-              [{ text: 'Join Community', url: groupLink }]
+              [{ text: 'Join Community', url: channelLink }]
             ]
           }
         }
@@ -404,7 +329,7 @@ const handleMediaSearch = async (msg, match) => {
       {
         reply_markup: {
           inline_keyboard: [
-            [{ text: 'Join Community', url: groupLink }]
+            [{ text: 'Join Community', url: channelLink }]
           ]
         }
       }
@@ -419,21 +344,6 @@ bot.onText(/\/tv (.+)/, handleMediaSearch);
 bot.onText(/\/id (movie|tv) (\d+)/, async (msg, match) => {
   const [_, type, id] = match;
   const { chat: { id: chatId }, from: { id: userId } } = msg;
-
-  // if (!await isMember(userId)) {
-  //   const msg = await bot.sendMessage(
-  //     chatId, 
-  //     `🚫 Please join our community first:`,
-  //     {
-  //       reply_markup: {
-  //         inline_keyboard: [
-  //           [{ text: 'Join Cineflow Chat', url: groupLink }]
-  //         ]
-  //       }
-  //     }
-  //   );
-  //   return scheduleMessageDeletion(chatId, msg.message_id);
-  // }
 
   try {
     const apiUrl = `https://api.themoviedb.org/3/${type}/${id}?api_key=${process.env.TMDB_API_KEY}`;
@@ -452,7 +362,7 @@ bot.onText(/\/id (movie|tv) (\d+)/, async (msg, match) => {
       {
         reply_markup: {
           inline_keyboard: [
-            [{ text: 'Join Community', url: groupLink }]
+            [{ text: 'Join Community', url: channelLink }]
           ]
         }
       }
