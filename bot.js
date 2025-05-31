@@ -2,216 +2,371 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const express = require('express');
+const Fuse = require('fuse.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
+const groupId = process.env.GROUP_ID;
+const channelId = process.env.CHANNEL_ID;
+const groupLink = process.env.GROUP_LINK || 'https://t.me/+8OKLbDERtu80MjA1';
+const channelLink = process.env.CHANNEL_LINK || 'https://t.me/dekhomoviesofficial';
 
-// Express server
-app.get('/', (req, res) => {
-  res.send('Movie Bot is running!');
-});
+const userSearchState = {};
+const messageTimeouts = new Map();
 
-app.get('/health', (req, res) => {
-  res.status(200).send('OK');
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
-
-// Bot commands
-bot.setMyCommands([
-  { command: 'start', description: 'Start the bot' },
-  { command: 'movie', description: 'Search a movie (e.g., /movie RRR)' },
-  { command: 'tv', description: 'Search a TV show (e.g., /tv Friends)' },
-  { command: 'id', description: 'Search by TMDB ID (e.g., /id movie 12345)' },
-]);
-
-bot.onText(/\/start/, (msg) => {
-  const chatId = msg.chat.id;
-  bot.sendMessage(chatId, `👋 Welcome to DeekhoMovies Bot!\n\n🎥 Search movies & TV shows and watch them directly on DekhoMovies.\n\nYou can either:\n1. Type /movie <name>\n2. Type /tv <name>\n3. Or simply type the movie/show name directly`);
-});
-
-// Helper function to send media result
-async function sendMediaResult(chatId, type, result) {
-  const title = result.title || result.name;
-  const id = result.id;
-  const imageUrl = `https://image.tmdb.org/t/p/w500${result.poster_path}`;
-  const cineflowLink = `${process.env.CINEFLOW_URL}/${type}/${id}`;
-  const downloadLink = `${process.env.CINEFLOW_URL}/download/${type}/${id}`;
-  const buttonText = type === 'movie' ? '🎬 Watch on DekhoMovies' : '📺 Watch on DekhoMovies';
-
-  const shareText = `Check out ${title} on Cineflow:\n${cineflowLink}`;
-  
-  await bot.sendPhoto(chatId, imageUrl, {
-    caption: `*${title}* (${type === 'movie' ? 'Movie' : 'TV Show'})\n\n${result.overview || 'No overview available'}`,
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: buttonText, url: cineflowLink },
-          { text: '⬇️ Download', url: downloadLink }
-        ],
-        [
-          { text: '🔗 Share', switch_inline_query: shareText }
-        ]
-      ]
+function scheduleMessageDeletion(chatId, messageId, delay = 120000) {
+  clearTimeout(messageTimeouts.get(messageId));
+  const timeout = setTimeout(async () => {
+    try {
+      await bot.deleteMessage(chatId, messageId);
+      messageTimeouts.delete(messageId);
+    } catch (err) {
+      console.error('Error deleting message:', err.message);
     }
-  });
+  }, delay);
+  messageTimeouts.set(messageId, timeout);
 }
 
-// Handle direct movie/TV show name input
-bot.on('text', async (msg) => {
-  const chatId = msg.chat.id;
-  const text = msg.text.trim();
+app.get('/', (req, res) => res.send('DekhoMovies Bot is running!'));
+app.get('/health', (req, res) => res.status(200).send('OK'));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
-  // Skip if it's a command
-  if (text.startsWith('/')) return;
+bot.setMyCommands([
+  { command: 'start', description: 'Start the bot' },
+  { command: 'movie', description: 'Search a movie (e.g., /movie Inception)' },
+  { command: 'tv', description: 'Search a TV show (e.g., /tv Breaking Bad)' },
+  { command: 'id', description: 'Search by TMDB ID (e.g., /id movie 123)' }
+]);
+
+bot.onText(/\/start/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  const welcomeButtons = {
+    inline_keyboard: [
+      [{ text: 'Join DekhoMovies Chat', url: groupLink }],
+      [{ text: 'Join DekhoMovies_official', url: channelLink }],
+      [{ text: 'Search Movies', switch_inline_query_current_chat: '/movie ' }]
+    ]
+  };
+
+  const welcomeMsg = await bot.sendMessage(chatId,
+    `👋 Welcome to DekhoMovies Bot!\n\n` +
+    `🔗 Please join our community to use the bot:\n`,
+    { 
+      reply_markup: welcomeButtons,
+      disable_web_page_preview: true 
+    }
+  );
+  scheduleMessageDeletion(chatId, welcomeMsg.message_id, 300000);
+});
+
+async function sendMediaResult(chatId, type, result) {
+  const title = result.title || result.name;
+  const year = result.release_date?.split('-')[0] || result.first_air_date?.split('-')[0] || '';
+  const caption = `*${title}* (${year})\n\n${result.overview || 'No overview available'}`;
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(process.env.CINEFLOW_URL + `/${type}/${result.id}`)}&text=${encodeURIComponent(`Check out ${title} on Cineflow!`)} \n Join our community for more updates! \n 👉👉${groupLink}`;
+  
+  const buttons = {
+    inline_keyboard: [
+      [
+        { 
+          text: type === 'movie' ? '🎬 Watch Movie' : '📺 Watch Episode',
+          url: `${process.env.CINEFLOW_URL}/${type}/${result.id}`
+        },
+        { 
+          text: '⬇️ Download', 
+          url: `${process.env.CINEFLOW_URL}/download/${type}/${result.id}`
+        }
+      ],
+      [
+        { text: '🔗 Share', url: shareUrl },
+        { text: 'Join BackUp Channel', url: channelLink }
+      ]
+    ]
+  };
 
   try {
-    // First try movie search
-    const movieEncodedUrl = encodeURIComponent(
-      `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(text)}&page=1&api_key=${process.env.TMDB_API_KEY}`
+    const msg = await bot.sendPhoto(
+      chatId,
+      `https://image.tmdb.org/t/p/w500${result.poster_path}`,
+      {
+        caption,
+        parse_mode: 'Markdown',
+        reply_markup: buttons
+      }
     );
-    const movieFinalUrl = `${process.env.PROXY_API_URL}${movieEncodedUrl}`;
-    const movieRes = await axios.get(movieFinalUrl);
+    // scheduleMessageDeletion(chatId, msg.message_id, 1000);
+  } catch (err) {
+    console.error('Error sending media:', err);
+    // Fallback to text if image fails
+    const msg = await bot.sendMessage(
+      chatId,
+      `${caption}\n\n🔗 ${process.env.CINEFLOW_URL}/${type}/${result.id}`,
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: buttons 
+      }
+    );
+    // scheduleMessageDeletion(chatId, msg.message_id, 300000);
+  }
+}
 
-    if (movieRes.data?.results?.length > 0) {
-      const exactMatch = movieRes.data.results.find(r => 
-        (r.title || r.name)?.toLowerCase() === text.toLowerCase()
-      ) || movieRes.data.results[0];
-      await sendMediaResult(chatId, 'movie', exactMatch);
+// Improved sendSearchResults function
+async function sendSearchResults(chatId, userId, query, page = 1) {
+  try {
+    // Clear previous search state
+if (userSearchState[userId]?.timeout) {
+      clearTimeout(userSearchState[userId].timeout);
+      delete userSearchState[userId];
+    }
+
+    // API request
+    const apiUrl = `https://api.themoviedb.org/3/search/multi?query=${encodeURIComponent(query)}&page=${page}&include_adult=false`;
+    const finalUrl = `${process.env.PROXY_API_URL}${encodeURIComponent(apiUrl + `&api_key=${process.env.TMDB_API_KEY}`)}`;
+    const res = await axios.get(finalUrl);
+
+    // Process results
+    const results = res.data?.results?.filter(item => 
+      (item.media_type === 'movie' || item.media_type === 'tv') && item.poster_path
+    ) || [];
+    
+    if (results.length === 0) {
+      const msg = await bot.sendMessage(
+        chatId, 
+        `❌ No results for "${query}"\n\nTry a different search term.`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: 'Join Community', url: channelLink }]
+            ]
+          }
+        }
+      );
+      scheduleMessageDeletion(chatId, msg.message_id);
       return;
     }
 
-    // If no movie found, try TV show search
-    const tvEncodedUrl = encodeURIComponent(
-      `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(text)}&page=1&api_key=${process.env.TMDB_API_KEY}`
-    );
-    const tvFinalUrl = `${process.env.PROXY_API_URL}${tvEncodedUrl}`;
-    const tvRes = await axios.get(tvFinalUrl);
+    // Create buttons with smart layout
+    const buttons = [];
+    let currentRow = [];
+    
+    results.forEach(item => {
+      const emoji = item.media_type === 'movie' ? '🎬' : '📺';
+      const year = item.release_date?.split('-')[0] || item.first_air_date?.split('-')[0] || '';
+      const title = `${emoji} ${item.title || item.name}${year ? ` (${year})` : ''}`;
+      
+      // Smart row breaking
+      if (title.length > 25 || currentRow.length >= 2) {
+        if (currentRow.length > 0) buttons.push(currentRow);
+        currentRow = [];
+      }
+      
+      currentRow.push({
+        text: title,
+        callback_data: `select_${item.media_type}_${item.id}`
+      });
+    });
 
-    if (tvRes.data?.results?.length > 0) {
-      const exactMatch = tvRes.data.results.find(r => 
-        (r.title || r.name)?.toLowerCase() === text.toLowerCase()
-      ) || tvRes.data.results[0];
-      await sendMediaResult(chatId, 'tv', exactMatch);
-    } else {
-      bot.sendMessage(chatId, '❌ No results found. Please try with /movie or /tv command.');
+    if (currentRow.length > 0) buttons.push(currentRow);
+
+    // Add pagination if needed
+    const totalPages = Math.min(res.data.total_pages || 1, 5); // Limit to 5 pages max
+    if (totalPages > 1) {
+      const pagination = [];
+      if (page > 1) pagination.push({ 
+        text: '⬅️ Previous', 
+        callback_data: `search_${query}_${page-1}` 
+      });
+      if (page < totalPages) pagination.push({ 
+        text: 'Next ➡️', 
+        callback_data: `search_${query}_${page+1}` 
+      });
+      if (pagination.length > 0) buttons.push(pagination);
     }
+
+    // Add share and join buttons
+    buttons.push([
+      { 
+        text: '🔗 Share Search', 
+        switch_inline_query: query 
+      },
+      { 
+        text: 'Join Community', 
+        url: channelLink 
+      }
+    ]);
+
+    // Send results
+    const msg = await bot.sendMessage(
+      chatId,
+      `🔍 Results for "${query}" (Page ${page}/${totalPages}):`,
+      { 
+        reply_markup: { inline_keyboard: buttons } 
+      }
+    );
+
+    // Store for pagination and auto-delete
+    userSearchState[userId] = {
+      query, 
+      page, 
+      totalPages, 
+      results,
+      messageId: msg.message_id,
+      timeout: setTimeout(async () => {
+        try {
+          // Only try to delete if the message is still there
+          await bot.deleteMessage(chatId, msg.message_id);
+        } catch (err) {
+          console.log('Auto-delete failed (message may already be deleted):', err.message);
+        } finally {
+          delete userSearchState[userId];
+        }
+      }, 180000) // Delete after 3 minutes
+    };
+
+console.log(`Sending search results for ${query} page ${page} as message ${msg.message_id}`);
+
   } catch (err) {
-    console.error(err.message);
-    bot.sendMessage(chatId, '⚠️ Something went wrong. Try again later.');
+    console.error('Search error:', err);
+    const msg = await bot.sendMessage(
+      chatId, 
+      '⚠️ Search failed. Try again later.',
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Join Community', url: channelLink }]
+          ]
+        }
+      }
+    );
+    scheduleMessageDeletion(chatId, msg.message_id);
   }
-});
+}
 
-// Movie command
-bot.onText(/\/movie (.+)/, async (msg, match) => {
-  const chatId = msg.chat.id;
-  const query = match[1].trim();
-
-  if (!query) {
-    return bot.sendMessage(chatId, '❌ Please enter a movie name. Example:\n/movie RRR');
-  }
+// Updated callback query handler
+bot.on('callback_query', async (callbackQuery) => {
+  const { message, data, from: { id: userId }, id: callbackId } = callbackQuery;
+  const chatId = message.chat.id;
 
   try {
-    const encodedUrl = encodeURIComponent(
-      `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(query)}&page=1&api_key=${process.env.TMDB_API_KEY}`
-    );
-    const finalUrl = `${process.env.PROXY_API_URL}${encodedUrl}`;
-    const res = await axios.get(finalUrl);
-
-    const results = res?.data?.results;
-    if (!results || results.length === 0) {
-      return bot.sendMessage(chatId, '❌ No results found. Please try again with a full name.');
+    if (data.startsWith('search_')) {
+      // Handle pagination - format is "search_query_pageNumber"
+      const parts = data.split('_');
+      const query = parts.slice(1, -1).join('_'); // Handle queries with underscores
+      const page = parseInt(parts[parts.length - 1]);
+      
+      await sendSearchResults(chatId, userId, query, page);
+      await bot.deleteMessage(chatId, message.message_id);
+      await bot.answerCallbackQuery(callbackId);
+    } 
+    else if (data.startsWith('select_')) {
+      const [_, type, id] = data.split('_');
+      const apiUrl = `https://api.themoviedb.org/3/${type}/${id}?api_key=${process.env.TMDB_API_KEY}`;
+      const res = await axios.get(`${process.env.PROXY_API_URL}${encodeURIComponent(apiUrl)}`);
+      
+      if (res.data) {
+        await sendMediaResult(chatId, type, res.data);
+      }
+      await bot.answerCallbackQuery(callbackId);
     }
-
-    const result = results.find(r =>
-      (r.title || r.name)?.toLowerCase() === query.toLowerCase()
-    ) || results[0];
-
-    await sendMediaResult(chatId, 'movie', result);
+    else {
+      await bot.answerCallbackQuery(callbackId, {
+        text: 'Unknown action',
+        show_alert: false
+      });
+    }
   } catch (err) {
-    console.error(err.message);
-    bot.sendMessage(chatId, '⚠️ Something went wrong. Try again later.');
+    console.error('Callback error:', err);
+    await bot.answerCallbackQuery(callbackId, {
+      text: 'Action failed. Try again.',
+      show_alert: true
+    });
   }
 });
 
-// TV command
-bot.onText(/\/tv (.+)/, async (msg, match) => {
-  const chatId = msg.chat.id;
-  const query = match[1].trim();
+// Message handlers
+bot.on('message', async (msg) => {
+  const { text, chat: { id: chatId }, from: { id: userId } } = msg;
+  if (!text || text.startsWith('/')) return;
+  await sendSearchResults(chatId, userId, text.trim());
+});
 
-  if (!query) {
-    return bot.sendMessage(chatId, '❌ Please enter a TV show name. Example:\n/tv Friends');
-  }
+const handleMediaSearch = async (msg, match) => {
+  const [_, type, query] = match;
+  const { chat: { id: chatId }, from: { id: userId } } = msg;
 
   try {
-    const encodedUrl = encodeURIComponent(
-      `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(query)}&page=1&api_key=${process.env.TMDB_API_KEY}`
-    );
-    const finalUrl = `${process.env.PROXY_API_URL}${encodedUrl}`;
+    const apiUrl = `https://api.themoviedb.org/3/search/${type}?query=${encodeURIComponent(query)}&page=1`;
+    const finalUrl = `${process.env.PROXY_API_URL}${encodeURIComponent(apiUrl + `&api_key=${process.env.TMDB_API_KEY}`)}`;
     const res = await axios.get(finalUrl);
 
-    const results = res?.data?.results;
-    if (!results || results.length === 0) {
-      return bot.sendMessage(chatId, '❌ No results found. Please try again with a full name.');
+    const result = res.data?.results?.[0];
+    if (!result) {
+      const msg = await bot.sendMessage(
+        chatId, 
+        `❌ No ${type} found for "${query}"`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: 'Try Again', switch_inline_query_current_chat: `/${type} ` }],
+              [{ text: 'Join Community', url: channelLink }]
+            ]
+          }
+        }
+      );
+      return scheduleMessageDeletion(chatId, msg.message_id);
     }
 
-    const result = results.find(r =>
-      (r.name)?.toLowerCase() === query.toLowerCase()
-    ) || results[0];
-
-    await sendMediaResult(chatId, 'tv', result);
+    await sendMediaResult(chatId, type, result);
   } catch (err) {
-    console.error(err.message);
-    bot.sendMessage(chatId, '⚠️ Something went wrong. Try again later.');
+    console.error(`${type} search error:`, err);
+    const msg = await bot.sendMessage(
+      chatId, 
+      `⚠️ ${type} search failed. Try again.`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Join Community', url: channelLink }]
+          ]
+        }
+      }
+    );
+    scheduleMessageDeletion(chatId, msg.message_id);
   }
-});
+};
 
-// TMDB ID search command
+bot.onText(/\/movie (.+)/, handleMediaSearch);
+bot.onText(/\/tv (.+)/, handleMediaSearch);
+
 bot.onText(/\/id (movie|tv) (\d+)/, async (msg, match) => {
-  const chatId = msg.chat.id;
-  const type = match[1];
-  const tmdbId = match[2];
+  const [_, type, id] = match;
+  const { chat: { id: chatId }, from: { id: userId } } = msg;
 
   try {
-    const encodedUrl = encodeURIComponent(
-      `https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=${process.env.TMDB_API_KEY}`
-    );
-    const finalUrl = `${process.env.PROXY_API_URL}${encodedUrl}`;
-    const res = await axios.get(finalUrl);
-
-    if (res.data && (res.data.title || res.data.name)) {
+    const apiUrl = `https://api.themoviedb.org/3/${type}/${id}?api_key=${process.env.TMDB_API_KEY}`;
+    const res = await axios.get(`${process.env.PROXY_API_URL}${encodeURIComponent(apiUrl)}`);
+    
+    if (res.data) {
       await sendMediaResult(chatId, type, res.data);
     } else {
-      try {
-        const searchEncodedUrl = encodeURIComponent(
-          `https://api.themoviedb.org/3/find/${tmdbId}?external_source=imdb_id&api_key=${process.env.TMDB_API_KEY}`
-        );
-        const searchFinalUrl = `${process.env.PROXY_API_URL}${searchEncodedUrl}`;
-        const searchRes = await axios.get(searchFinalUrl);
-        
-        if (searchRes.data?.movie_results?.length > 0) {
-          await sendMediaResult(chatId, 'movie', searchRes.data.movie_results[0]);
-        } else if (searchRes.data?.tv_results?.length > 0) {
-          await sendMediaResult(chatId, 'tv', searchRes.data.tv_results[0]);
-        } else {
-          bot.sendMessage(chatId, `❌ No ${type} found with ID ${tmdbId}. Please check the ID and try again.`);
-        }
-      } catch (fallbackErr) {
-        console.error(fallbackErr.message);
-        bot.sendMessage(chatId, `❌ No ${type} found with ID ${tmdbId}. Please check the ID and try again.`);
-      }
+      throw new Error('No data received');
     }
   } catch (err) {
-    console.error(err.message);
-    if (err.response?.status === 404) {
-      bot.sendMessage(chatId, `❌ No ${type} found with ID ${tmdbId}. Please check the ID and try again.`);
-    } else {
-      bot.sendMessage(chatId, '⚠️ Something went wrong. Try again later.');
-    }
+    console.error('ID search error:', err);
+    const msg = await bot.sendMessage(
+      chatId, 
+      `❌ Invalid ${type} ID or not found`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Join Community', url: channelLink }]
+          ]
+        }
+      }
+    );
+    scheduleMessageDeletion(chatId, msg.message_id);
   }
 });
