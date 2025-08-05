@@ -48,7 +48,7 @@ bot.onText(/\/start/, async (msg) => {
     inline_keyboard: [
       [{ text: 'Join Cineflow Chat', url: groupLink }],
       [{ text: 'Join Cineflow Movies', url: channelLink }],
-      [{ text: 'Search Movies', switch_inline_query_current_chat: '/movie ' }]
+      // [{ text: 'Search Movies', switch_inline_query_current_chat: '/movie ' }]
     ]
   };
 
